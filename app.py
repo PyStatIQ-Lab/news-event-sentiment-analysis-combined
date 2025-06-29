@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 from wordcloud import WordCloud
 import numpy as np
 import pytz
-import ta  # Technical analysis library
+import ta
 import re  # Added for better text processing
 
 # Configure plot style
@@ -20,7 +20,7 @@ plt.style.use('seaborn-v0_8-darkgrid')
 sns.set_palette("Set2")
 st.set_page_config(layout="wide", page_title="Stock News Analytics Dashboard", page_icon="📈")
 
-# Define event types with keywords
+# Enhanced event types with more comprehensive keywords
 EVENT_TYPES = [
     ("acquisition", ["acquire", "acquisition", "buyout", "takeover", "merger", "purchase", 
                      "stake buy", "stake sale", "absorb", "consolidat"]),
@@ -122,19 +122,6 @@ def get_sector(symbol, exchange):
     except:
         return "Unknown"
 
-# Improved event extraction with regex matching
-def extract_event_type(headline):
-    headline_lower = headline.lower()
-    # Clean and tokenize the headline
-    tokens = re.findall(r'\b\w+\b', headline_lower)
-    
-    for event_type, keywords in EVENT_TYPES:
-        for kw in keywords:
-            # Check for keyword in tokens (whole word match)
-            if any(kw in token for token in tokens):
-                return event_type
-    return "other"
-
 # Enhanced sentiment analysis with negation handling
 def compute_sentiment_score(headline):
     headline_lower = headline.lower()
@@ -167,12 +154,16 @@ def compute_sentiment_score(headline):
                 
     return score
 
-# Event type extraction
+# Improved event extraction with regex matching
 def extract_event_type(headline):
     headline_lower = headline.lower()
+    # Clean and tokenize the headline
+    tokens = re.findall(r'\b\w+\b', headline_lower)
+    
     for event_type, keywords in EVENT_TYPES:
         for kw in keywords:
-            if kw in headline_lower:
+            # Check for keyword in tokens (whole word match)
+            if any(kw in token for token in tokens):
                 return event_type
     return "other"
 
@@ -513,6 +504,63 @@ def generate_regulatory_gauge(risk_score):
                 'value': risk_score}}))
     return fig
 
+# New function to calculate stock impact for a news item
+def calculate_news_impact(item):
+    if not item.get('linkedScrips'):
+        return None
+    
+    impacts = []
+    for scrip in item['linkedScrips']:
+        symbol = scrip['symbol']
+        exchange = scrip['exchange']
+        
+        try:
+            pub_date = datetime.datetime.strptime(
+                item['publishedAt'].replace('Z', ''),
+                "%Y-%m-%dT%H:%M:%S.%f"
+            )
+            pub_date_date = pub_date.date()
+            
+            # Get stock data
+            _, _, _, history = get_stock_data(symbol, exchange)
+            if history is None or history.empty:
+                continue
+            
+            # Reset index if needed
+            if isinstance(history.index, pd.DatetimeIndex):
+                history = history.reset_index()
+            history['Date'] = history['Date'].dt.date
+            
+            # Find previous trading day
+            prev_days = history[history['Date'] < pub_date_date]
+            if prev_days.empty:
+                continue
+            prev_day = prev_days.iloc[-1]['Date']
+            prev_price = prev_days.iloc[-1]['Close']
+            
+            # Find next trading day
+            next_days = history[history['Date'] > pub_date_date]
+            if next_days.empty:
+                continue
+            next_day = next_days.iloc[0]['Date']
+            next_price = next_days.iloc[0]['Close']
+            
+            # Calculate change
+            change = (next_price - prev_price) / prev_price * 100
+            impacts.append({
+                "symbol": symbol,
+                "exchange": exchange,
+                "change": change,
+                "prev_price": prev_price,
+                "next_price": next_price,
+                "prev_date": prev_day,
+                "next_date": next_day
+            })
+        except:
+            continue
+    
+    return impacts
+
 def main():
     # Load news data
     st.sidebar.title("Dashboard Settings")
@@ -779,8 +827,8 @@ def main():
     else:
         st.warning("No predictions available based on current news data")
     
-    # Detailed news section
-    st.subheader("Latest Market News")
+    # Detailed news section with impact analysis
+    st.subheader("Latest Market News with Stock Impact")
     
     # Filter options
     col1, col2 = st.columns(2)
@@ -796,7 +844,7 @@ def main():
         selected_event = st.selectbox("Filter by Event Type", 
                                      options=['All'] + [et[0] for et in EVENT_TYPES])
     
-    # Display news cards
+    # Display news cards with impact
     displayed_count = 0
     for i, item in enumerate(news_data):
         # Apply filters
@@ -851,6 +899,22 @@ def main():
                 sentiment_color = "green" if sentiment > 0 else "gray" if sentiment == 0 else "red"
                 st.markdown(f"**Sentiment:** <span style='color:{sentiment_color}; font-weight:bold'>{sentiment_text} {sentiment_icon}</span>", 
                             unsafe_allow_html=True)
+                
+                # Show stock impact
+                impacts = calculate_news_impact(item)
+                if impacts:
+                    st.subheader("Stock Impact Analysis")
+                    for impact in impacts:
+                        change_color = "green" if impact['change'] > 0 else "red"
+                        change_icon = "▲" if impact['change'] > 0 else "▼"
+                        st.markdown(f"""
+                        **{impact['symbol']} ({impact['exchange'].upper()}):**
+                        - **Price Change:** <span style='color:{change_color}'>{impact['change']:.2f}% {change_icon}</span>
+                        - **Before News ({impact['prev_date'].strftime('%Y-%m-%d')}):** ₹{impact['prev_price']:.2f}
+                        - **After News ({impact['next_date'].strftime('%Y-%m-%d')}):** ₹{impact['next_price']:.2f}
+                        """, unsafe_allow_html=True)
+                else:
+                    st.info("No stock impact data available")
                 
                 if 'summary' in item:
                     st.write(item['summary'])
