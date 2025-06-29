@@ -13,6 +13,7 @@ from wordcloud import WordCloud
 import numpy as np
 import pytz
 import ta  # Technical analysis library
+import re  # Added for better text processing
 
 # Configure plot style
 plt.style.use('seaborn-v0_8-darkgrid')
@@ -21,16 +22,26 @@ st.set_page_config(layout="wide", page_title="Stock News Analytics Dashboard", p
 
 # Define event types with keywords
 EVENT_TYPES = [
-    ("acquisition", ["acquire", "acquisition", "buys", "takeover", "stake buy", "stake sale"]),
-    ("partnership", ["partner", "partners", "teams up", "collaborat", "joint venture", "joins hands"]),
-    ("agreement", ["agreement", "signs", "deal", "contract", "pact"]),
-    ("investment", ["invest", "funding", "raise capital", "infuse"]),
-    ("launch", ["launch", "introduce", "release", "unveil"]),
-    ("expansion", ["expand", "expansion", "new facility", "new plant"]),
-    ("award", ["award", "recognize", "prize"]),
-    ("leadership", ["appoint", "hire", "resign", "exit", "join as", "takes over"]),
-    ("financial", ["results", "earnings", "profit", "revenue", "dividend"]),
-    ("regulatory", ["regulator", "sebi", "rbi", "government", "approval", "clearance"])
+    ("acquisition", ["acquire", "acquisition", "buyout", "takeover", "merger", "purchase", 
+                     "stake buy", "stake sale", "absorb", "consolidat"]),
+    ("partnership", ["partner", "alliance", "collaborat", "joint venture", "joins hands", 
+                     "teams up", "strategic tie-up", "cooperat", "synergy"]),
+    ("agreement", ["agreement", "contract", "pact", "deal", "signs", "memorandum", "mou", 
+                   "accord", "settlement", "understanding"]),
+    ("investment", ["invest", "funding", "raise capital", "infuse", "fundraise", "vc funding", 
+                    "private equity", "capital infusion", "series a", "series b"]),
+    ("launch", ["launch", "introduce", "release", "unveil", "debut", "premiere", "roll out", 
+                "commence", "inaugurate", "begin"]),
+    ("expansion", ["expand", "expansion", "new facility", "new plant", "new office", "growth", 
+                   "geographic", "capacity increase", "scale up", "broaden"]),
+    ("award", ["award", "prize", "recognition", "honor", "achievement", "accolade", "medal", 
+               "trophy", "distinction", "commendation"]),
+    ("leadership", ["appoint", "hire", "resign", "exit", "join as", "takes over", "ceo", "cfo", 
+                    "cto", "board", "director", "management", "executive", "promote"]),
+    ("financial", ["results", "earnings", "profit", "revenue", "dividend", "q1", "q2", "q3", "q4", 
+                   "quarterly", "annual", "balance sheet", "p&l", "financials"]),
+    ("regulatory", ["regulator", "sebi", "rbi", "government", "approval", "clearance", "compliance", 
+                    "investigation", "penalty", "lawsuit", "court", "legal", "settlement"])
 ]
 
 # Define event duration classifications
@@ -111,18 +122,50 @@ def get_sector(symbol, exchange):
     except:
         return "Unknown"
 
-# Sentiment analysis with enhanced word lists
+# Improved event extraction with regex matching
+def extract_event_type(headline):
+    headline_lower = headline.lower()
+    # Clean and tokenize the headline
+    tokens = re.findall(r'\b\w+\b', headline_lower)
+    
+    for event_type, keywords in EVENT_TYPES:
+        for kw in keywords:
+            # Check for keyword in tokens (whole word match)
+            if any(kw in token for token in tokens):
+                return event_type
+    return "other"
+
+# Enhanced sentiment analysis with negation handling
 def compute_sentiment_score(headline):
     headline_lower = headline.lower()
+    
+    # Handle negations
+    negation_words = ['not', 'no', 'never', 'none', 'nobody', 'nothing', 'neither', 'nor', 'nowhere']
     positive_words = ['growth', 'profit', 'gain', 'surge', 'rise', 'upgrade', 'buy', 'strong', 
                       'win', 'success', 'beat', 'positive', 'high', 'increase', 'outperform']
     negative_words = ['fall', 'loss', 'decline', 'drop', 'cut', 'sell', 'weak', 'risk', 'warn', 
                       'fail', 'negative', 'low', 'decrease', 'underperform', 'downgrade']
     
-    positive_count = sum(headline_lower.count(word) for word in positive_words)
-    negative_count = sum(headline_lower.count(word) for word in negative_words)
+    # Tokenize with context for negation
+    tokens = headline_lower.split()
+    score = 0
     
-    return positive_count - negative_count
+    for i, token in enumerate(tokens):
+        if token in positive_words:
+            # Check for negation in previous words
+            if i > 0 and tokens[i-1] in negation_words:
+                score -= 1  # Positive word negated becomes negative
+            else:
+                score += 1
+                
+        elif token in negative_words:
+            # Check for negation in previous words
+            if i > 0 and tokens[i-1] in negation_words:
+                score += 1  # Negative word negated becomes positive
+            else:
+                score -= 1
+                
+    return score
 
 # Event type extraction
 def extract_event_type(headline):
